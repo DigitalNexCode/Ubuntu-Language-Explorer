@@ -1,41 +1,28 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Google Cloud credentials
+google-credentials.json
+*-credentials.json
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
 venv/
-ENV/
 env/
-.env
+.env/
 
 # IDE
-.idea/
 .vscode/
-*.swp
-*.swo
+.idea/
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Project specific
-google-cloud-credentials.json
+# Misc
 *.log
+.DS_Store

@@ -6,6 +6,8 @@ import time
 from supabase import Client, create_client
 from typing import Optional, Dict, Any, List
 import httpx
+import streamlit as st
+from datetime import datetime
 
 class SupabaseClient:
     _instance: Optional['SupabaseClient'] = None
@@ -47,6 +49,7 @@ class SupabaseClient:
                 # Initialize with timeout settings
                 options = {
                     'headers': {
+                        'Authorization': f"Bearer {self.supabase_key}",
                         'X-Client-Info': 'ubuntu-language-learning'
                     },
                     'timeout': {
@@ -357,7 +360,7 @@ class SupabaseClient:
                 'translated_text': translated_text,
                 'source_lang': source_lang,
                 'target_lang': target_lang,
-                'created_at': 'now()'
+                'created_at': datetime.now().isoformat()
             }
             self.supabase.table('translations').insert(data).execute()
             return True
@@ -386,7 +389,7 @@ class SupabaseClient:
             self.supabase.table('user_stats').upsert({
                 'user_id': user_id,
                 **stats,
-                'updated_at': 'now()'
+                'updated_at': datetime.now().isoformat()
             }).execute()
             return True
         except Exception as e:
