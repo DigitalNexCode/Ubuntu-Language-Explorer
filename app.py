@@ -9,22 +9,25 @@ import matplotlib.pyplot as plt
 from streamlit.runtime.scriptrunner import get_script_run_ctx, add_script_run_ctx
 import streamlit.components.v1 as components
 from streamlit_option_menu import option_menu
-from utils.supabase_client import SupabaseClient
+from utils.auth import sign_up, sign_in, sign_out, get_current_user
+from utils.database import Database
 from utils.audio import AudioService
 from utils.translation import TranslationService
 from gtts import gTTS
 import io
+from utils.session import init_session_state, set_current_user, clear_current_user
+import bcrypt
 
-# Load environment variables first
-load_dotenv()
-
-# Must be the first Streamlit command after imports
+# Must be the first Streamlit command
 st.set_page_config(
-    page_title="Ubuntu Language Learning",
+    page_title="Ubuntu Language Explorer",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Load environment variables first
+load_dotenv()
 
 # Initialize services with better error handling
 db = None
@@ -33,6 +36,7 @@ audio = None
 
 def init_services():
     """Initialize all required services with proper error handling."""
+    global db  # Add this line to make db global
     services = {
         'supabase': None,
         'translation': None,
@@ -40,12 +44,13 @@ def init_services():
         'ai': None
     }
     
-    # Initialize Supabase
+    # Initialize Database
     try:
-        services['supabase'] = SupabaseClient()
-        print("✅ Supabase client initialized successfully")
+        db = Database()  # Assign the database instance
+        services['supabase'] = db
+        print("✅ Database initialized successfully")
     except Exception as e:
-        st.error(f"Failed to initialize Supabase client: {str(e)}")
+        st.error(f"Failed to initialize database: {str(e)}")
         st.stop()
     
     # Set fallback mode for other services
@@ -200,108 +205,88 @@ def init_session_state():
     if 'resend_email' not in st.session_state:
         st.session_state.resend_email = ""
 
-# Initialize everything
-init_session_state()
-services = init_services()
-db = services['supabase']
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt"""
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
-# Check service availability
-def update_feature_status():
-    """Update feature availability status based on service health."""
-    st.session_state.features['database'] = db is not None and hasattr(db, 'supabase')
-    st.session_state.features['translation'] = services['translation'] is not None
-    st.session_state.features['tts'] = services['tts'] is not None
-    st.session_state.features['ai'] = services['ai'] is not None
-    st.session_state.features['offline_mode'] = not st.session_state.features['database']
+def verify_password(password: str, hashed: str) -> bool:
+    """Verify a password against its hash"""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# Update feature status
-update_feature_status()
-
-# Initialize Supabase client
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_KEY")
-try:
-    supabase = create_client(supabase_url, supabase_key)
-except Exception as e:
-    st.error(f"Warning: Could not initialize Supabase client: {e}")
-    supabase = None
-
-# Custom CSS
-st.markdown("""
-    <style>
-    .main {
-        padding: 2rem;
-    }
-    .stButton>button {
-        width: 100%;
-    }
-    .css-1d391kg {
-        padding: 1rem;
-    }
-    .stProgress .st-bo {
-        background-color: #1f77b4;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# Sidebar navigation with custom styling
-with st.sidebar:
-    # Try to load logo, use text if image is not available
-    try:
-        st.image("assets/logo.png", use_container_width=True)
-    except:
-        st.title("Ubuntu Explorer")
-        st.markdown("---")
+def show_login():
+    """Show login form"""
+    st.header("Sign In")
     
-    selected = option_menu(
-        menu_title="Navigation",
-        options=[
-            "Home",
-            "Learn",
-            "Games",
-            "Culture",
-            "Community",
-            "Learning",
-            "Profile"
-        ],
-        icons=[
-            "house",
-            "book",
-            "controller",
-            "globe",
-            "people",
-            "mortarboard",
-            "person"
-        ],
-        menu_icon="menu-up",
-        default_index=0,
-        styles={
-            "container": {"padding": "0!important", "background-color": "#fafafa"},
-            "icon": {"color": "#fd7e14", "font-size": "20px"},
-            "nav-link": {
-                "font-size": "16px",
-                "text-align": "left",
-                "margin": "0px",
-                "padding": "10px",
-                "--hover-color": "#eee",
-            },
-            "nav-link-selected": {"background-color": "#fd7e14", "color": "white"},
-        },
-    )
-    
-    # Show feature status
-    if not all(st.session_state.features.values()):
-        st.sidebar.warning("⚠️ Some features are limited:")
-        if not st.session_state.features['database']:
-            st.sidebar.info("📁 Operating in offline mode")
-        if not st.session_state.features['tts']:
-            st.sidebar.info("🔊 Using basic audio features")
-        if not st.session_state.features['translation']:
-            st.sidebar.info("🔄 Limited translation capabilities")
-        if not st.session_state.features['ai']:
-            st.sidebar.info("🤖 AI features unavailable")
+    with st.form("login_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign In")
+        
+        if submitted and email and password:
+            user = db.get_user(email)
+            if user and verify_password(password, user['password_hash']):
+                set_current_user(user)
+                st.success("Successfully signed in!")
+                st.rerun()
+            else:
+                st.error("Invalid email or password")
 
-# Authentication section
+def show_register():
+    """Show registration form"""
+    st.header("Create Account")
+    
+    with st.form("register_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+        
+        submitted = st.form_submit_button("Create Account")
+        
+        if submitted:
+            if not email or not password or not confirm_password:
+                st.error("Please fill in all required fields")
+                return
+                
+            if password != confirm_password:
+                st.error("Passwords do not match")
+                return
+                
+            try:
+                # Create user
+                result = db.create_user(
+                    email=email,
+                    password_hash=hash_password(password)
+                )
+                
+                if result.get('success'):
+                    st.success("Account created successfully! Please sign in.")
+                    st.session_state.show_login = True
+                    st.rerun()
+                else:
+                    st.error(f"Error creating account: {result.get('error', 'Unknown error')}")
+            except Exception as e:
+                st.error(f"Error creating account: {str(e)}")
+
+def show_welcome():
+    """Show welcome message for authenticated users"""
+    user = st.session_state.user
+    st.header(f"Welcome, {user.get('first_name', 'User')}! 👋")
+    
+    st.write("""
+    Welcome to Ubuntu Language! Here's what you can do:
+    
+    1. 📚 **Learn**: Start learning a new language with interactive lessons
+    2. 🎮 **Games**: Practice through fun language games
+    3. 🎭 **Culture**: Explore the rich cultural heritage
+    4. 👥 **Community**: Connect with other learners
+    5. 👤 **Profile**: Track your progress and manage settings
+    """)
+    
+    if st.button("Sign Out"):
+        clear_current_user()
+        st.rerun()
+
 def show_auth_section():
     """Display authentication section with improved error handling."""
     if not st.session_state.authenticated:
@@ -338,22 +323,11 @@ def show_auth_section():
                             elif result.get('message'):
                                 st.success(result['message'])
                                 st.info("Please check your email to confirm your account.")
+                                st.rerun()  
                             else:
                                 st.success("Account created successfully! You can now sign in.")
-                                st.session_state.signup_username = ""
-                                st.session_state.signup_email = ""
-                                st.session_state.signup_password = ""
-                                st.session_state.signup_confirm = ""
+                                st.rerun()  
 
-            # Show resend confirmation button outside the form
-            if st.session_state.get('show_resend_signup'):
-                if st.button("Resend Confirmation Email (Sign Up)"):
-                    resend_result = db.resend_confirmation_email(st.session_state.signup_email)
-                    if resend_result.get('error'):
-                        st.error(resend_result['error'])
-                    else:
-                        st.success("Confirmation email sent!")
-        
         with col2:
             st.write("### Sign In")
             with st.form("signin_form"):
@@ -367,65 +341,20 @@ def show_auth_section():
                     else:
                         with st.spinner("Signing in..."):
                             result = db.sign_in(email, password)
-                            
                             if result.get('error'):
                                 st.error(result['error'])
-                                if 'Email not confirmed' in result['error']:
-                                    st.session_state.show_resend_signin = True
-                                    st.session_state.resend_email = email
                             else:
-                                st.session_state.user = result['user']
                                 st.session_state.authenticated = True
-                                st.session_state.show_resend_signin = False
+                                st.session_state.user = result['user']
+                                st.success("Signed in successfully!")
+                                st.rerun()  
 
-            # Show resend confirmation button outside the form
-            if st.session_state.get('show_resend_signin'):
-                if st.button("Resend Confirmation Email (Sign In)"):
-                    resend_result = db.resend_confirmation_email(st.session_state.resend_email)
-                    if resend_result.get('error'):
-                        st.error(resend_result['error'])
-                    else:
-                        st.success("Confirmation email sent!")
-            
     else:
-        # Show user info and logout button
-        st.sidebar.write(f"👤 Welcome, {st.session_state.user.user_metadata.get('username', 'User')}!")
-        if st.sidebar.button("Sign Out"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
+        st.write(f"### Welcome back!")
+        if st.button("Sign Out"):
+            st.session_state.clear()
             st.rerun()
 
-def handle_auth_callback():
-    """Handle authentication callback from Supabase."""
-    try:
-        # Get URL parameters using the new API
-        params = dict(st.query_params)
-        
-        # Check for access token in URL parameters
-        if 'access_token' in params:
-            access_token = params['access_token'][0]
-            refresh_token = params.get('refresh_token', [None])[0]
-            
-            # Set the tokens in Supabase client
-            result = db.set_session(access_token, refresh_token)
-            
-            if result.get('error'):
-                st.error(result['error'])
-            else:
-                st.success("Email confirmed successfully! You can now sign in.")
-                # Clear URL parameters using the new API
-                st.query_params.clear()
-        
-        # Check for error in URL parameters
-        elif 'error' in params:
-            error_description = params.get('error_description', ['An error occurred'])[0]
-            st.error(f"Authentication error: {error_description}")
-            st.query_params.clear()
-
-    except Exception as e:
-        st.error(f"Error handling authentication callback: {str(e)}")
-
-# Update user activity
 def update_user_activity():
     """Update user activity timestamp and related metrics."""
     if st.session_state.authenticated and st.session_state.user_id:
@@ -466,7 +395,14 @@ def update_user_activity():
             except Exception as e:
                 print(f"Failed to update user activity: {str(e)}")
 
-# Show progress chart
+def update_feature_status():
+    """Update feature availability status based on service health."""
+    st.session_state.features['database'] = db is not None and hasattr(db, 'supabase')
+    st.session_state.features['translation'] = translator is not None
+    st.session_state.features['tts'] = audio is not None
+    st.session_state.features['ai'] = None
+    st.session_state.features['offline_mode'] = not st.session_state.features['database']
+
 def show_progress_chart():
     # Sample data - in real app, this would come from the database
     dates = [datetime.now() - timedelta(days=x) for x in range(7)]
@@ -493,11 +429,9 @@ def show_progress_chart():
     
     return fig
 
-# Calculate level based on XP
 def calculate_level(xp):
     return int(1 + (xp / 100))
 
-# Check achievements
 def check_achievements():
     achievements = []
     if st.session_state.translations_today >= 10:
@@ -520,7 +454,6 @@ def check_achievements():
         })
     return achievements
 
-# Show achievements popup
 def show_achievements_popup():
     new_achievements = check_achievements()
     for achievement in new_achievements:
@@ -529,7 +462,6 @@ def show_achievements_popup():
             st.balloons()
             st.success(f"🏆 New Achievement Unlocked: {achievement['title']}!")
 
-# Show level progress
 def show_level_progress():
     current_level = st.session_state.level
     current_xp = st.session_state.xp
@@ -540,7 +472,6 @@ def show_level_progress():
     st.progress(progress)
     st.caption(f"XP: {current_xp % 100}/{100} to Level {current_level + 1}")
 
-# Show daily challenges
 def show_daily_challenges():
     st.markdown("### 🎯 Daily Challenges")
     
@@ -562,7 +493,6 @@ def show_daily_challenges():
             if challenge['current'] >= challenge['target']:
                 st.success("Completed! 🌟")
 
-# Show skill radar
 def show_skill_radar():
     categories = ['Grammar', 'Vocabulary', 'Pronunciation', 'Culture', 'Writing']
     # Sample data - in real app, would come from database
@@ -590,7 +520,6 @@ def show_skill_radar():
     
     return fig
 
-# Main content area
 def show_home():
     st.title("Ubuntu Language Explorer")
     
@@ -796,39 +725,36 @@ def show_profile():
         theme = st.selectbox("Theme", ["Light", "Dark"])
         notifications = st.checkbox("Enable Notifications")
 
-# Main app
 def main():
-    # Handle authentication callback
-    handle_auth_callback()
+    """Main application"""
+    st.title("🌍 Ubuntu Language")
     
-    # Show authentication section
-    show_auth_section()
+    # Initialize session state
+    init_session_state()
     
-    if st.session_state.authenticated:
-        # Update user activity
-        update_user_activity()
-        
-        # Show selected page content
-        if st.session_state.current_page == "Home":
-            show_home()
-        elif st.session_state.current_page == "Learn":
-            show_learn()
-        elif st.session_state.current_page == "Games":
-            show_games()
-        elif st.session_state.current_page == "Culture":
-            show_culture()
-        elif st.session_state.current_page == "Community":
-            show_community()
-        elif st.session_state.current_page == "Profile":
-            show_profile()
-        
-        # Footer
-        st.markdown("---")
-        st.markdown(
-            "Built with ❤️ for South African languages and culture | "
-            "[About](https://github.com/yourusername/ubuntu-language) | "
-            "[Report Bug](https://github.com/yourusername/ubuntu-language/issues)"
-        )
+    # Show appropriate view based on authentication state
+    if st.session_state.user:
+        show_welcome()
+    else:
+        # Toggle between login and register
+        if 'show_login' not in st.session_state:
+            st.session_state.show_login = True
+            
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Sign In", type="primary" if st.session_state.show_login else "secondary"):
+                st.session_state.show_login = True
+                st.rerun()
+        with col2:
+            if st.button("Create Account", type="primary" if not st.session_state.show_login else "secondary"):
+                st.session_state.show_login = False
+                st.rerun()
+                
+        if st.session_state.show_login:
+            show_login()
+        else:
+            show_register()
 
 if __name__ == "__main__":
+    db = Database()
     main()

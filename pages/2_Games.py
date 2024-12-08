@@ -1,4 +1,12 @@
 import streamlit as st
+
+# Must be the first Streamlit command
+st.set_page_config(
+    page_title="Games - Ubuntu Language Explorer",
+    page_icon="🎮",
+    layout="wide"
+)
+
 from utils.cultural_games import CulturalGames
 from utils.languages import LANGUAGES
 

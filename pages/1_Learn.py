@@ -1,34 +1,38 @@
 import streamlit as st
-from utils.audio import AudioService
-from utils.translation import TranslationService
-from utils.supabase_client import SupabaseClient
-from utils.languages import LANGUAGES, get_language_code, get_native_name, is_sign_language
-import time
 
-# Initialize services
-try:
-    audio = AudioService()
-except Exception as e:
-    print(f"Warning: Could not initialize Audio service: {e}")
-    audio = None
-
-try:
-    translator = TranslationService()
-except Exception as e:
-    print(f"Warning: Could not initialize Translation service: {e}")
-    translator = None
-
-try:
-    db = SupabaseClient()
-except Exception as e:
-    print(f"Warning: Could not initialize Supabase client: {e}")
-    db = None
-
+# Must be the first Streamlit command
 st.set_page_config(
     page_title="Learn - Ubuntu Language Explorer",
     page_icon="📚",
     layout="wide"
 )
+
+from utils.audio import AudioService
+from utils.translation import TranslationService
+from utils.database import db
+from utils.auth import get_current_user
+from utils.languages import LANGUAGES, get_language_code, get_native_name, is_sign_language
+import time
+
+def initialize_services():
+    """Initialize translation and text-to-speech services"""
+    global audio, translator
+    
+    # Initialize translation service (using googletrans)
+    translator = TranslationService()
+    
+    # Initialize text-to-speech (using gTTS)
+    audio = AudioService()
+    print("Services initialized with local services for text-to-speech and translation")
+
+# Initialize services
+initialize_services()
+
+# Check if user is authenticated
+user = get_current_user()
+if not user:
+    st.error("Please sign in to access the learning content.")
+    st.stop()
 
 # Initialize session state
 if 'user_id' not in st.session_state:
@@ -230,9 +234,17 @@ def show_lesson_content(lesson_number, language_code, level):
     # Show lesson description
     st.write(f"### {LESSON_CONTENT[level][lesson_number]['description']}")
 
+    # Get user's progress from database
+    user_progress = db.get_learning_progress(st.session_state.user['id'])
+    current_lesson_progress = next(
+        (p for p in user_progress if p['language'] == language_code and p['level'] == level and p['lesson_id'] == lesson_number),
+        None
+    ) if user_progress else None
+
     # Lesson progress tracker
     progress_placeholder = st.empty()
-    progress = 0.0
+    progress = current_lesson_progress['progress'] if current_lesson_progress else 0.0
+    progress_placeholder.progress(progress)
 
     # Display phrases with audio support and practice
     phrases = LESSON_CONTENT[level][lesson_number]['phrases']
@@ -280,15 +292,30 @@ def show_lesson_content(lesson_number, language_code, level):
         progress = float(correct_answers) / float(total_exercises)
         progress_placeholder.progress(progress)
 
+        # Update progress in database
+        db.update_learning_progress(
+            user_id=st.session_state.user['id'],
+            language=language_code,
+            level=level,
+            lesson_id=lesson_number,
+            progress=progress,
+            completed=(progress >= 1.0)
+        )
+
     # Check if lesson is complete
     if correct_answers == total_exercises:
-        st.session_state.lesson_complete = True
         st.success("🎉 Congratulations! You've completed this lesson!")
         
-        # Award XP
+        # Award XP and update in database
         xp_gained = 50
-        st.session_state.xp += xp_gained
-        st.session_state.daily_challenges['learning']['current'] += 1
+        db.update_user_xp(st.session_state.user['id'], xp_gained)
+        
+        # Update daily challenge progress
+        db.update_daily_challenge_progress(
+            user_id=st.session_state.user['id'],
+            challenge_type='learning',
+            progress=1
+        )
         
         # Show next lesson button if not at last lesson
         if lesson_number < 5:
@@ -297,12 +324,17 @@ def show_lesson_content(lesson_number, language_code, level):
                 st.rerun()
         else:
             st.success("🎓 Congratulations! You've completed all lessons in this level!")
-            # Add logic for level progression here
 
 def show_level_progress(level):
     st.sidebar.subheader("Level Progress")
+    # Get progress from database
+    user_progress = db.get_learning_progress(st.session_state.user['id'])
+    completed_lessons = len([
+        p for p in user_progress 
+        if p['level'] == level and p['completed']
+    ]) if user_progress else 0
+    
     total_lessons = 5
-    completed_lessons = st.session_state.current_lesson - 1
     progress = completed_lessons / total_lessons
     st.sidebar.progress(progress)
     st.sidebar.write(f"Completed: {completed_lessons}/{total_lessons} lessons")

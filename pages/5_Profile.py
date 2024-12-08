@@ -1,218 +1,169 @@
 import streamlit as st
-from utils.supabase_client import SupabaseClient
+
+# Must be the first Streamlit command
+st.set_page_config(
+    page_title="Profile - Ubuntu Language Explorer",
+    page_icon="👤",
+    layout="wide"
+)
+
+from utils.database import db
 from utils.translation import TranslationService
 from datetime import datetime
 
 # Initialize services
-db = SupabaseClient()
 translator = TranslationService()
-
-# Page config
-st.set_page_config(
-    page_title="User Profile - Ubuntu Language Explorer",
-    page_icon="👤",
-    layout="wide"
-)
 
 def initialize_session_state():
     if 'profile_tab' not in st.session_state:
         st.session_state.profile_tab = "Overview"
     if 'learning_history' not in st.session_state:
         st.session_state.learning_history = []
-    if 'achievements' not in st.session_state:
-        st.session_state.achievements = []
-    if 'preferences' not in st.session_state:
-        st.session_state.preferences = {
-            "primary_language": "English",
-            "learning_languages": ["Zulu"],
-            "difficulty_level": "Beginner",
-            "daily_goal": 30,  # minutes
-            "preferred_topics": ["Culture", "Grammar"]
-        }
 
 def get_user_stats():
-    # In a real app, these would come from the database
-    return {
-        "total_lessons": len(st.session_state.learning_history),
-        "languages_learning": len(st.session_state.preferences["learning_languages"]),
-        "achievements_earned": len(st.session_state.achievements),
-        "streak_days": 5  # Placeholder
-    }
+    """Get user's learning statistics"""
+    if not st.session_state.user:
+        return None
+    
+    user_id = st.session_state.user['id']
+    return db.get_user_stats(user_id)
 
 def display_profile_navigation():
-    st.sidebar.header("Profile Sections")
-    sections = ["Overview", "Progress", "Achievements", "Settings"]
+    """Display profile navigation tabs"""
+    tabs = ["Overview", "Progress", "Achievements", "Settings"]
+    st.sidebar.title("Profile Navigation")
     
-    for section in sections:
-        if st.sidebar.button(f"👉 {section}", key=f"nav_{section}"):
-            st.session_state.profile_tab = section
-            st.rerun()
+    for tab in tabs:
+        if st.sidebar.button(tab):
+            st.session_state.profile_tab = tab
 
 def display_profile_overview():
+    """Display user profile overview"""
+    if not st.session_state.user:
+        st.warning("Please sign in to view your profile")
+        return
+
     st.header("Profile Overview")
     
     # User info
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns(2)
     with col1:
-        st.image("https://via.placeholder.com/150", caption="Profile Picture")
-    with col2:
-        st.subheader("Welcome back!")
-        st.write("Member since: January 2024")
-        st.write(f"Primary Language: {st.session_state.preferences['primary_language']}")
-        st.write("Learning: " + ", ".join(st.session_state.preferences["learning_languages"]))
+        st.subheader("User Information")
+        st.write(f"Email: {st.session_state.user['email']}")
+        st.write(f"Member since: {st.session_state.user['created_at']}")
     
-    # Quick stats
-    st.subheader("Your Learning Journey")
-    stats = get_user_stats()
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Lessons", stats["total_lessons"])
+    # Learning stats
     with col2:
-        st.metric("Languages Learning", stats["languages_learning"])
-    with col3:
-        st.metric("Achievements", stats["achievements_earned"])
-    with col4:
-        st.metric("Day Streak", stats["streak_days"])
+        st.subheader("Learning Statistics")
+        stats = get_user_stats()
+        if stats:
+            st.metric("Stories Read", stats.get('stories_read', 0))
+            st.metric("Lessons Completed", stats.get('lessons_completed', 0))
+            st.metric("Practice Sessions", stats.get('practice_sessions', 0))
 
 def display_progress_tracking():
-    st.header("Learning Progress")
+    """Display user's learning progress."""
+    progress = db.get_learning_progress(st.session_state.user['id'])
     
-    # Language progress
-    for language in st.session_state.preferences["learning_languages"]:
+    if not progress:
+        st.info("No learning progress recorded yet. Start learning to see your progress!")
+        return
+        
+    st.subheader("Learning Progress")
+    
+    # Group progress by language
+    progress_by_language = {}
+    for entry in progress:
+        lang = entry['language']
+        if lang not in progress_by_language:
+            progress_by_language[lang] = []
+        progress_by_language[lang].append(entry)
+    
+    # Display progress for each language
+    for language, entries in progress_by_language.items():
         with st.expander(f"{language} Progress"):
-            # Progress bars for different skills
-            st.subheader("Skills Progress")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("Grammar")
-                st.progress(0.7)
-                st.write("Vocabulary")
-                st.progress(0.5)
-            
-            with col2:
-                st.write("Pronunciation")
-                st.progress(0.3)
-                st.write("Cultural Knowledge")
-                st.progress(0.6)
-            
-            # Recent activity
-            st.subheader("Recent Activity")
-            if st.session_state.learning_history:
-                for activity in st.session_state.learning_history[-5:]:
-                    st.write(f"📝 {activity}")
-            else:
-                st.info("No learning activity recorded yet")
+            for entry in entries:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.write(f"**{entry['resource_type']}**")
+                with col2:
+                    st.progress(entry['progress'])
+                with col3:
+                    status = "Completed" if entry['completed'] else f"{int(entry['progress']*100)}% Complete"
+                    st.write(status)
 
 def display_achievements():
+    """Display user achievements"""
+    if not st.session_state.user:
+        st.warning("Please sign in to view your achievements")
+        return
+
     st.header("Achievements")
     
-    # Achievement categories
-    categories = {
-        "Language Mastery": [
-            {
-                "title": "First Steps",
-                "description": "Complete your first lesson",
-                "icon": "🎯",
-                "earned": True
-            },
-            {
-                "title": "Grammar Guru",
-                "description": "Master 10 grammar concepts",
-                "icon": "📚",
-                "earned": False
-            }
-        ],
-        "Cultural Explorer": [
-            {
-                "title": "Cultural Pioneer",
-                "description": "Learn about 5 cultural traditions",
-                "icon": "🌍",
-                "earned": True
-            },
-            {
-                "title": "Story Collector",
-                "description": "Read 10 traditional stories",
-                "icon": "📖",
-                "earned": False
-            }
-        ]
-    }
+    # Get achievements from database
+    achievements = db.get_achievements(st.session_state.user['id'])
     
-    for category, achievements in categories.items():
-        st.subheader(category)
-        cols = st.columns(len(achievements))
-        
-        for i, achievement in enumerate(achievements):
-            with cols[i]:
-                st.write(f"{achievement['icon']} **{achievement['title']}**")
+    if not achievements:
+        st.info("Complete lessons and stories to earn achievements!")
+        return
+    
+    # Display achievements in a grid
+    col1, col2 = st.columns(2)
+    
+    for i, achievement in enumerate(achievements):
+        with col1 if i % 2 == 0 else col2:
+            with st.expander(f"🏆 {achievement['title']}", expanded=True):
                 st.write(achievement['description'])
-                if achievement['earned']:
-                    st.success("Earned! 🏆")
-                else:
-                    st.info("In Progress...")
+                st.caption(f"Earned on: {achievement['earned_date']}")
+                if achievement.get('progress'):
+                    st.progress(achievement['progress'])
 
 def display_settings():
-    st.header("Profile Settings")
+    """Display user settings"""
+    if not st.session_state.user:
+        st.warning("Please sign in to access settings")
+        return
+
+    st.header("Settings")
     
-    with st.form("profile_settings"):
-        # Language preferences
-        st.subheader("Language Settings")
-        primary_language = st.selectbox(
-            "Primary Language",
-            ["English", "Zulu", "Xhosa", "Sotho"],
-            index=["English", "Zulu", "Xhosa", "Sotho"].index(
-                st.session_state.preferences["primary_language"]
-            )
-        )
-        
-        learning_languages = st.multiselect(
-            "Languages I'm Learning",
-            ["Zulu", "Xhosa", "Sotho", "Tswana"],
-            default=st.session_state.preferences["learning_languages"]
-        )
-        
-        # Learning preferences
-        st.subheader("Learning Preferences")
-        difficulty = st.select_slider(
-            "Difficulty Level",
-            ["Beginner", "Intermediate", "Advanced"],
-            value=st.session_state.preferences["difficulty_level"]
-        )
-        
-        daily_goal = st.number_input(
-            "Daily Learning Goal (minutes)",
-            min_value=5,
-            max_value=240,
-            value=st.session_state.preferences["daily_goal"],
-            step=5
-        )
-        
-        preferred_topics = st.multiselect(
-            "Preferred Learning Topics",
-            ["Grammar", "Vocabulary", "Culture", "Conversation", "Reading", "Writing"],
-            default=st.session_state.preferences["preferred_topics"]
-        )
-        
-        # Save button
-        if st.form_submit_button("Save Changes"):
-            st.session_state.preferences.update({
-                "primary_language": primary_language,
-                "learning_languages": learning_languages,
-                "difficulty_level": difficulty,
-                "daily_goal": daily_goal,
-                "preferred_topics": preferred_topics
-            })
+    # Get current settings from database with default values
+    settings = db.get_user_settings(st.session_state.user['id'])
+    
+    # Language preferences
+    st.subheader("Language Preferences")
+    preferred_language = st.selectbox(
+        "Preferred Learning Language",
+        options=["Zulu", "Xhosa", "Sotho", "Tswana", "Venda", "Tsonga", "Swati", "Ndebele", "Pedi"],
+        index=["Zulu", "Xhosa", "Sotho", "Tswana", "Venda", "Tsonga", "Swati", "Ndebele", "Pedi"].index(settings['preferred_language'])
+    )
+    
+    # Notification settings
+    st.subheader("Notifications")
+    email_notifications = st.checkbox("Email Notifications", value=settings['email_notifications'])
+    progress_reminders = st.checkbox("Progress Reminders", value=settings['progress_reminders'])
+    
+    # Save settings
+    if st.button("Save Settings"):
+        new_settings = {
+            'preferred_language': preferred_language,
+            'email_notifications': email_notifications,
+            'progress_reminders': progress_reminders
+        }
+        if db.update_user_settings(st.session_state.user['id'], new_settings):
             st.success("Settings saved successfully!")
+            st.rerun()
+        else:
+            st.error("Failed to save settings. Please try again.")
 
 def main():
     initialize_session_state()
     
-    # Sidebar navigation
+    if not st.session_state.get('user'):
+        st.warning("Please sign in to access your profile")
+        return
+    
     display_profile_navigation()
     
-    # Main content based on selected tab
     if st.session_state.profile_tab == "Overview":
         display_profile_overview()
     elif st.session_state.profile_tab == "Progress":

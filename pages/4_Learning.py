@@ -1,217 +1,287 @@
 import streamlit as st
-from utils.supabase_client import SupabaseClient
+from utils.database import Database
 from utils.translation import TranslationService
 from utils.audio import AudioService
+from utils.learning_content import LearningContent
 
 # Initialize services
-db = SupabaseClient()
+db = Database()
 translator = TranslationService()
 audio = AudioService()
+learning_content = LearningContent()
 
 # Page config
 st.set_page_config(
-    page_title="Learning Resources - Ubuntu Language Explorer",
-    page_icon="📖",
+    page_title="Learning - Ubuntu Language",
+    page_icon="📚",
     layout="wide"
 )
 
 def initialize_session_state():
-    if 'current_resource' not in st.session_state:
-        st.session_state.current_resource = "Grammar"
-    if 'saved_resources' not in st.session_state:
-        st.session_state.saved_resources = []
+    """Initialize session state variables"""
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    if 'selected_language' not in st.session_state:
+        st.session_state.selected_language = None
+    if 'selected_topic' not in st.session_state:
+        st.session_state.selected_topic = None
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    if 'conversation_mode' not in st.session_state:
+        st.session_state.conversation_mode = False
 
-def get_learning_resources():
+def get_available_languages():
     return {
-        "Grammar": {
-            "title": "Grammar Guides",
-            "content": {
-                "overview": """
-                Comprehensive grammar guides for South African languages.
-                Learn the structure and rules of each language.
-                """,
-                "resources": [
-                    {
-                        "title": "Noun Classes",
-                        "description": "Understanding noun classes in Bantu languages",
-                        "examples": {
-                            "Zulu": [
-                                ("umuntu", "person - Class 1"),
-                                ("abantu", "people - Class 2"),
-                                ("umfula", "river - Class 3")
-                            ],
-                            "Xhosa": [
-                                ("umntu", "person - Class 1"),
-                                ("abantu", "people - Class 2"),
-                                ("umlambo", "river - Class 3")
-                            ]
-                        }
-                    },
-                    {
-                        "title": "Verb Conjugation",
-                        "description": "Learn how verbs change based on tense and subject",
-                        "examples": {
-                            "Zulu": [
-                                ("ngihamba", "I go"),
-                                ("ngihambile", "I went"),
-                                ("ngizohamba", "I will go")
-                            ],
-                            "Xhosa": [
-                                ("ndihamba", "I go"),
-                                ("ndihambile", "I went"),
-                                ("ndizahamba", "I will go")
-                            ]
-                        }
-                    }
-                ]
-            }
+        "zulu": "isiZulu",
+        "xhosa": "isiXhosa",
+        "sotho": "Sesotho",
+        "tswana": "Setswana",
+        "venda": "Tshivenda",
+        "tsonga": "Xitsonga",
+        "swati": "Siswati",
+        "ndebele": "isiNdebele",
+        "pedi": "Sepedi"
+    }
+
+def get_available_topics():
+    return {
+        "basics": {
+            "title": "Basic Phrases",
+            "description": "Learn essential greetings and everyday phrases."
         },
-        "Vocabulary": {
-            "title": "Vocabulary Lists",
-            "content": {
-                "overview": """
-                Themed vocabulary lists with audio pronunciation and cultural context.
-                """,
-                "resources": [
-                    {
-                        "title": "Basic Phrases",
-                        "description": "Essential everyday phrases",
-                        "examples": {
-                            "Zulu": [
-                                ("Ngiyabonga", "Thank you"),
-                                ("Unjani?", "How are you?"),
-                                ("Sala kahle", "Stay well/Goodbye")
-                            ],
-                            "Xhosa": [
-                                ("Enkosi", "Thank you"),
-                                ("Unjani?", "How are you?"),
-                                ("Sala kakuhle", "Stay well/Goodbye")
-                            ]
-                        }
-                    }
-                ]
-            }
+        "vocabulary": {
+            "title": "Common Words",
+            "description": "Build your vocabulary with commonly used words."
         },
-        "Practice": {
-            "title": "Practice Exercises",
-            "content": {
-                "overview": """
-                Interactive exercises to practice what you've learned.
-                """,
-                "resources": [
-                    {
-                        "title": "Grammar Drills",
-                        "description": "Practice exercises for grammar concepts",
-                        "exercises": [
-                            {
-                                "type": "fill-in-blank",
-                                "question": "Complete the sentence: Umuntu ___ kahle (The person ___ well)",
-                                "options": ["uhamba", "bahamba", "lihamba"],
-                                "correct": "uhamba",
-                                "explanation": "Class 1 nouns use 'u-' prefix for subject concord"
-                            }
-                        ]
-                    }
-                ]
-            }
+        "grammar": {
+            "title": "Grammar Rules",
+            "description": "Understand the structure of the language."
+        },
+        "culture": {
+            "title": "Cultural Context",
+            "description": "Learn about cultural aspects and proper language usage."
         }
     }
 
-def display_resource_selection():
-    st.sidebar.header("Learning Resources")
-    resources = get_learning_resources()
+def format_response(response_data):
+    """Format the response for display"""
+    formatted_text = response_data["text"]
+    if response_data.get("context"):
+        formatted_text += "\n\nContext:\n" + "\n".join(response_data["context"])
+    if response_data.get("examples"):
+        formatted_text += "\n\nExamples:\n" + "\n".join(response_data["examples"])
+    if response_data.get("cultural_notes"):
+        formatted_text += "\n\nCultural Notes:\n" + "\n".join(response_data["cultural_notes"])
+    if response_data.get("usage_notes"):
+        formatted_text += "\n\nUsage Notes:\n" + "\n".join(response_data["usage_notes"])
+    return formatted_text
+
+def display_language_selection():
+    st.sidebar.header("Choose Language")
+    languages = get_available_languages()
     
-    for resource_id, resource_data in resources.items():
-        if st.sidebar.button(f"📚 {resource_data['title']}", key=f"resource_{resource_id}"):
-            st.session_state.current_resource = resource_id
+    selected = st.sidebar.selectbox(
+        "Select a language to learn",
+        options=list(languages.keys()),
+        format_func=lambda x: languages[x],
+        key="language_selector"
+    )
+    
+    if selected != st.session_state.selected_language:
+        st.session_state.selected_language = selected
+        st.session_state.selected_topic = None
+        st.session_state.chat_history = []
+        st.rerun()
+
+def display_topic_selection():
+    if st.session_state.selected_language:
+        st.sidebar.header("Choose Topic")
+        topics = get_available_topics()
+        
+        selected = st.sidebar.selectbox(
+            "Select a topic to learn",
+            options=list(topics.keys()),
+            format_func=lambda x: topics[x]["title"],
+            key="topic_selector"
+        )
+        
+        if selected != st.session_state.selected_topic:
+            st.session_state.selected_topic = selected
+            st.session_state.chat_history = []
             st.rerun()
 
-def display_saved_resources():
-    st.sidebar.header("Saved Resources")
-    if st.session_state.saved_resources:
-        for resource in st.session_state.saved_resources:
-            st.sidebar.write(f"📌 {resource}")
-    else:
-        st.sidebar.info("No saved resources yet")
-
-def display_resource_content():
-    resources = get_learning_resources()
-    current_resource = resources[st.session_state.current_resource]
+def display_learning_interface():
+    if not st.session_state.user:
+        st.warning("Please sign in to access the learning interface.")
+        return
+        
+    if not st.session_state.selected_language:
+        st.info("👈 Please select a language from the sidebar to start learning.")
+        return
+        
+    if not st.session_state.selected_topic:
+        st.info("👈 Please select a topic from the sidebar to continue.")
+        return
+        
+    languages = get_available_languages()
+    topics = get_available_topics()
     
-    st.header(current_resource['title'])
-    st.write(current_resource['content']['overview'])
+    # Load previous conversation if available
+    if not st.session_state.chat_history:
+        conversation = db.load_conversation(
+            st.session_state.user['id'],
+            st.session_state.selected_language,
+            st.session_state.selected_topic
+        )
+        if conversation:
+            st.session_state.chat_history = conversation["messages"]
+            if conversation.get("context"):
+                learning_content.set_conversation_context(
+                    st.session_state.selected_language,
+                    eval(conversation["context"])
+                )
     
-    for resource in current_resource['content']['resources']:
-        with st.expander(resource['title']):
-            st.write(resource['description'])
-            
-            if 'examples' in resource:
-                st.subheader("Examples")
-                tabs = st.tabs(list(resource['examples'].keys()))
-                
-                for i, (lang, examples) in enumerate(resource['examples'].items()):
-                    with tabs[i]:
-                        for example in examples:
-                            col1, col2, col3 = st.columns([2, 2, 1])
-                            with col1:
-                                st.write(f"**{example[0]}**")
-                            with col2:
-                                st.write(example[1])
-                            with col3:
-                                if st.button("🔊", key=f"listen_{lang}_{example[0]}"):
-                                    audio_content = audio.text_to_speech(
-                                        example[0],
-                                        f"{lang.lower()}-ZA"
-                                    )
-                                    if audio_content:
-                                        st.audio(audio_content)
-            
-            if 'exercises' in resource:
-                st.subheader("Practice Exercises")
-                for exercise in resource['exercises']:
-                    st.write(f"**{exercise['question']}**")
-                    answer = st.radio(
-                        "Select your answer:",
-                        exercise['options'],
-                        key=f"exercise_{exercise['question']}"
-                    )
-                    
-                    if st.button("Check", key=f"check_{exercise['question']}"):
-                        if answer == exercise['correct']:
-                            st.success(f"Correct! {exercise['explanation']}")
-                        else:
-                            st.error(f"Try again. {exercise['explanation']}")
-            
-            # Save resource button
-            if st.button("📌 Save Resource", key=f"save_{resource['title']}"):
-                if resource['title'] not in st.session_state.saved_resources:
-                    st.session_state.saved_resources.append(resource['title'])
-                    st.success("Resource saved!")
-
-def display_download_section():
-    st.markdown("---")
-    st.header("📥 Downloadable Resources")
+    # Display current selection
+    st.header(f"Learning {languages[st.session_state.selected_language]}")
     
-    col1, col2 = st.columns(2)
-    
+    # Add conversation mode toggle
+    col1, col2 = st.columns([3, 1])
     with col1:
-        st.subheader("Study Materials")
-        st.info("Coming soon: Downloadable PDF guides and worksheets")
-    
+        st.subheader(f"Topic: {topics[st.session_state.selected_topic]['title']}")
+        st.write(topics[st.session_state.selected_topic]['description'])
     with col2:
-        st.subheader("Audio Lessons")
-        st.info("Coming soon: Downloadable audio lessons for offline learning")
+        if st.button("Practice Speaking" if not st.session_state.conversation_mode else "Exit Practice"):
+            st.session_state.conversation_mode = not st.session_state.conversation_mode
+            if st.session_state.conversation_mode:
+                # Initialize conversation context
+                learning_content.initialize_conversation(st.session_state.selected_language)
+                response_data = learning_content.get_conversation_response(
+                    st.session_state.selected_language,
+                    "start_conversation"
+                )
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": response_data["text"]
+                })
+            else:
+                learning_content.end_practice_mode(st.session_state.selected_language)
+            
+            # Save conversation state
+            context = learning_content.get_conversation_context(st.session_state.selected_language)
+            if context:
+                db.save_conversation_state(
+                    st.session_state.user['id'],
+                    st.session_state.selected_language,
+                    st.session_state.selected_topic,
+                    str(context),
+                    st.session_state.chat_history
+                )
+            st.rerun()
+    
+    # Chat interface
+    st.markdown("---")
+    
+    if st.session_state.conversation_mode:
+        st.markdown("### Practice Speaking")
+        st.write("Have a conversation with me in your selected language. I'll help you practice!")
+    else:
+        st.markdown("### Ask anything about this topic")
+        # Show example questions based on selected topic
+        st.write("Example questions you can ask:")
+        if st.session_state.selected_topic == "basics":
+            st.write("- How do I say hello in this language?")
+            st.write("- What are the common greetings?")
+            st.write("- How do I respond to a greeting?")
+        elif st.session_state.selected_topic == "grammar":
+            st.write("- What are the noun classes?")
+            st.write("- How do I form present tense?")
+            st.write("- How do verbs work in this language?")
+        elif st.session_state.selected_topic == "vocabulary":
+            st.write("- What are the words for family members?")
+            st.write("- How do I count in this language?")
+            st.write("- What are essential everyday words?")
+        elif st.session_state.selected_topic == "culture":
+            st.write("- What are important cultural customs?")
+            st.write("- How do I show respect when speaking?")
+            st.write("- What are traditional greetings?")
+    
+    # Display chat history
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+            if message.get("audio"):
+                st.audio(message["audio"])
+    
+    # Chat input
+    if prompt := st.chat_input("Type your message..." if st.session_state.conversation_mode else f"Ask about {topics[st.session_state.selected_topic]['title']}..."):
+        # Add user message to chat
+        st.session_state.chat_history.append({
+            "role": "user", 
+            "content": prompt
+        })
+        
+        try:
+            # Get response based on mode
+            response_data = learning_content.get_conversation_response(
+                st.session_state.selected_language,
+                prompt,
+                st.session_state.selected_topic
+            )
+            
+            # Format the response
+            formatted_response = format_response(response_data)
+            
+            # Create response message
+            response_message = {
+                "role": "assistant",
+                "content": formatted_response
+            }
+            
+            # Add audio if available
+            if response_data["audio_text"]:
+                audio_content = audio.text_to_speech(
+                    response_data["audio_text"],
+                    st.session_state.selected_language
+                )
+                if audio_content:
+                    response_message["audio"] = audio_content
+            
+            # Add response to chat history
+            st.session_state.chat_history.append(response_message)
+            
+            # Save conversation state
+            context = learning_content.get_conversation_context(st.session_state.selected_language)
+            if context:
+                db.save_conversation_state(
+                    st.session_state.user['id'],
+                    st.session_state.selected_language,
+                    st.session_state.selected_topic,
+                    str(context),
+                    st.session_state.chat_history
+                )
+            
+            # Save learning progress
+            db.update_learning_progress(
+                user_id=st.session_state.user['id'],
+                resource_type=st.session_state.selected_topic,
+                resource_id=st.session_state.selected_language,
+                progress=0.5  # Update this based on actual progress
+            )
+            
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Error processing request: {str(e)}")
 
 def main():
     initialize_session_state()
     
-    # Sidebar
-    display_resource_selection()
-    display_saved_resources()
+    # Display sidebar elements
+    display_language_selection()
+    display_topic_selection()
     
     # Main content
-    display_resource_content()
-    display_download_section()
+    display_learning_interface()
 
 if __name__ == "__main__":
     main()
