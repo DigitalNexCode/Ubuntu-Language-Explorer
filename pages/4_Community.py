@@ -56,11 +56,20 @@ def display_forum_selection():
 def display_user_stats():
     if st.session_state.user:
         user = st.session_state.user
+        settings = db.get_user_settings(user['id'])
+        
         st.sidebar.markdown("---")
         st.sidebar.header("Your Stats")
-        st.sidebar.write(f"👤 {user['first_name']} {user['last_name']}")
-        st.sidebar.write(f"🌍 {user['country']}")
-        st.sidebar.write(f"🗣️ {user['preferred_language']}")
+        st.sidebar.write(f"👤 {user['email']}")
+        if settings['preferred_language']:
+            st.sidebar.write(f"🗣️ Learning: {settings['preferred_language']}")
+        
+        # Get user's stats
+        stats = db.get_user_stats(user['id'])
+        if stats:
+            st.sidebar.write(f"📚 Stories Read: {stats['stories_read']}")
+            st.sidebar.write(f"✅ Lessons Completed: {stats['lessons_completed']}")
+            st.sidebar.write(f"🎯 Practice Sessions: {stats['practice_sessions']}")
         
         # Get user's post count
         post_count = db.get_user_post_count(user['id'])
