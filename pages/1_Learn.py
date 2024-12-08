@@ -295,9 +295,8 @@ def show_lesson_content(lesson_number, language_code, level):
         # Update progress in database
         db.update_learning_progress(
             user_id=st.session_state.user['id'],
-            language=language_code,
-            level=level,
-            lesson_id=lesson_number,
+            resource_type='lesson',
+            resource_id=f"{level}_{lesson_number}",
             progress=progress,
             completed=(progress >= 1.0)
         )
