@@ -116,6 +116,24 @@ class Database:
                     target_language TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                
+                CREATE TABLE IF NOT EXISTS language_training (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    language TEXT NOT NULL,
+                    training_type TEXT NOT NULL,
+                    training_data TEXT NOT NULL,
+                    validation_count INTEGER DEFAULT 0,
+                    validation_status TEXT DEFAULT 'pending'
+                );
+                
+                CREATE TABLE IF NOT EXISTS training_validations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    training_id INTEGER NOT NULL,
+                    user_id INTEGER,
+                    status TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (training_id) REFERENCES language_training(id)
+                );
             """)
 
     @contextmanager
@@ -652,6 +670,73 @@ class Database:
         except Exception as e:
             print(f"Error updating user settings: {str(e)}")
             return False
+
+    def update_training_validation(self, training_id: int, status: str, user_id: int = None) -> dict:
+        """Update the validation status of a training entry."""
+        try:
+            with self._get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Insert validation record
+                cursor.execute("""
+                    INSERT INTO training_validations (training_id, user_id, status)
+                    VALUES (?, ?, ?)
+                """, (training_id, user_id, status))
+                
+                # Update validation count and status in training entry
+                cursor.execute("""
+                    UPDATE language_training 
+                    SET validation_count = validation_count + 1,
+                        validation_status = CASE 
+                            WHEN validation_count >= 3 THEN 
+                                CASE 
+                                    WHEN (
+                                        SELECT COUNT(*) 
+                                        FROM training_validations 
+                                        WHERE training_id = ? AND status = 'correct'
+                                    ) >= 2 THEN 'verified'
+                                    ELSE 'rejected'
+                                END
+                            ELSE validation_status
+                        END
+                    WHERE id = ?
+                """, (training_id, training_id))
+                
+                conn.commit()
+                return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def update_user_stats(self, user_id: int, stat_type: str) -> dict:
+        """Update user statistics."""
+        try:
+            with self._get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get current stats
+                cursor.execute("""
+                    SELECT * FROM user_stats WHERE user_id = ?
+                """, (user_id,))
+                stats = cursor.fetchone()
+                
+                if not stats:
+                    # Create new stats record if it doesn't exist
+                    cursor.execute("""
+                        INSERT INTO user_stats (user_id, contributions)
+                        VALUES (?, 1)
+                    """, (user_id,))
+                else:
+                    # Update existing stats
+                    cursor.execute("""
+                        UPDATE user_stats 
+                        SET contributions = contributions + 1
+                        WHERE user_id = ?
+                    """, (user_id,))
+                
+                conn.commit()
+                return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 # Create a database instance
 db = Database()

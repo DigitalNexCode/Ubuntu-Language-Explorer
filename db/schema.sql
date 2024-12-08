@@ -51,6 +51,28 @@ CREATE TABLE favorites (
     UNIQUE(user_id, content_type, content_id)
 );
 
+-- Create language_training table
+CREATE TABLE IF NOT EXISTS language_training (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES app_users(id),
+    language TEXT NOT NULL,
+    phrase TEXT NOT NULL,
+    translation TEXT NOT NULL,
+    context TEXT,
+    validation_status TEXT DEFAULT 'pending',
+    validation_count INTEGER DEFAULT 0,
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create training_validations table
+CREATE TABLE IF NOT EXISTS training_validations (
+    id SERIAL PRIMARY KEY,
+    training_id INTEGER NOT NULL REFERENCES language_training(id),
+    user_id UUID NOT NULL REFERENCES app_users(id),
+    status TEXT NOT NULL,
+    validated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create RLS Policies
 
 -- app_users policies
