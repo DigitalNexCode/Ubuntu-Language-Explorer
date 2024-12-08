@@ -119,20 +119,69 @@ class Database:
                 
                 CREATE TABLE IF NOT EXISTS language_training (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
                     language TEXT NOT NULL,
-                    training_type TEXT NOT NULL,
-                    training_data TEXT NOT NULL,
+                    phrase TEXT NOT NULL,
+                    translation TEXT NOT NULL,
+                    context TEXT,
+                    category TEXT NOT NULL,
+                    difficulty TEXT NOT NULL,
+                    formality TEXT NOT NULL,
+                    validation_status TEXT DEFAULT 'pending',
                     validation_count INTEGER DEFAULT 0,
-                    validation_status TEXT DEFAULT 'pending'
+                    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
                 );
                 
                 CREATE TABLE IF NOT EXISTS training_validations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     training_id INTEGER NOT NULL,
-                    user_id INTEGER,
+                    user_id INTEGER NOT NULL,
                     status TEXT NOT NULL,
+                    suggestion TEXT,
+                    validated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (training_id) REFERENCES language_training(id),
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                );
+                
+                CREATE TABLE IF NOT EXISTS training_suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    training_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    suggestion TEXT NOT NULL,
+                    status TEXT DEFAULT 'pending',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (training_id) REFERENCES language_training(id)
+                    FOREIGN KEY (training_id) REFERENCES language_training(id),
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                );
+                
+                CREATE TABLE IF NOT EXISTS context_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    training_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (training_id) REFERENCES language_training(id),
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                );
+                
+                CREATE TABLE IF NOT EXISTS user_achievements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                );
+                
+                CREATE TABLE IF NOT EXISTS user_stats (
+                    user_id INTEGER PRIMARY KEY,
+                    contributions INTEGER DEFAULT 0,
+                    validations INTEGER DEFAULT 0,
+                    suggestions INTEGER DEFAULT 0,
+                    accuracy_score REAL DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
                 );
             """)
 
@@ -737,6 +786,123 @@ class Database:
                 return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def get_training_analytics(self, language: str) -> dict:
+        """Get analytics data for training contributions"""
+        try:
+            with self._get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get daily contribution trends
+                cursor.execute("""
+                    SELECT DATE(submitted_at) as date, COUNT(*) as contributions
+                    FROM language_training
+                    WHERE language = ?
+                    GROUP BY DATE(submitted_at)
+                    ORDER BY date DESC
+                    LIMIT 30
+                """, (language,))
+                trends = cursor.fetchall()
+                
+                # Get category distribution
+                cursor.execute("""
+                    SELECT category, COUNT(*) as count
+                    FROM language_training
+                    WHERE language = ?
+                    GROUP BY category
+                """, (language,))
+                categories = cursor.fetchall()
+                
+                # Get validation stats
+                cursor.execute("""
+                    SELECT 
+                        SUM(CASE WHEN validation_status = 'pending' THEN 1 ELSE 0 END) as pending,
+                        SUM(CASE WHEN validation_status = 'verified' THEN 1 ELSE 0 END) as verified,
+                        ROUND(AVG(CASE WHEN validation_status = 'rejected' THEN 1 ELSE 0 END) * 100, 2) as rejection_rate
+                    FROM language_training
+                    WHERE language = ?
+                """, (language,))
+                stats = cursor.fetchone()
+                
+                return {
+                    "trends": trends,
+                    "categories": categories,
+                    "stats": stats
+                }
+        except Exception as e:
+            print(f"Error getting training analytics: {e}")
+            return None
+
+    def get_training_leaderboard(self, language: str = None) -> list:
+        """Get leaderboard of top contributors"""
+        try:
+            with self._get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                query = """
+                    SELECT 
+                        u.email as user_email,
+                        COUNT(lt.id) as contributions,
+                        us.accuracy_score,
+                        us.validations
+                    FROM users u
+                    LEFT JOIN language_training lt ON u.id = lt.user_id
+                    LEFT JOIN user_stats us ON u.id = us.user_id
+                """
+                
+                if language:
+                    query += " WHERE lt.language = ?"
+                    cursor.execute(query + " GROUP BY u.id ORDER BY contributions DESC", (language,))
+                else:
+                    cursor.execute(query + " GROUP BY u.id ORDER BY contributions DESC")
+                
+                return cursor.fetchall()
+        except Exception as e:
+            print(f"Error getting leaderboard: {e}")
+            return []
+
+    def add_training_suggestion(self, training_id: int, user_id: int, suggestion: str) -> dict:
+        """Add a suggestion for improving a training entry"""
+        try:
+            with self._get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO training_suggestions (training_id, user_id, suggestion)
+                    VALUES (?, ?, ?)
+                """, (training_id, user_id, suggestion))
+                conn.commit()
+                return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def request_more_context(self, training_id: int, user_id: int) -> dict:
+        """Request more context for a training entry"""
+        try:
+            with self._get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO context_requests (training_id, user_id)
+                    VALUES (?, ?)
+                """, (training_id, user_id))
+                conn.commit()
+                return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_achievements(self, user_id: int) -> list:
+        """Get user's achievements"""
+        try:
+            with self._get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM user_achievements
+                    WHERE user_id = ?
+                    ORDER BY earned_at DESC
+                """, (user_id,))
+                return cursor.fetchall()
+        except Exception as e:
+            print(f"Error getting achievements: {e}")
+            return []
 
 # Create a database instance
 db = Database()
