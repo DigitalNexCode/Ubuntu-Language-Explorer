@@ -1,6 +1,5 @@
 import streamlit as st
 from utils.languages import LANGUAGES
-import google.generativeai as genai
 from dotenv import load_dotenv
 import os
 import json
@@ -12,13 +11,16 @@ import pandas as pd
 # Load environment variables
 load_dotenv()
 
-# Initialize Gemini AI
+# Initialize AI model
+model = None
 try:
+    import google.generativeai as genai
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel('gemini-pro')
+except ImportError:
+    st.warning("AI services not available. Using fallback content. Error: Could not import google-generativeai")
 except Exception as e:
-    st.warning("AI services not available. Using fallback content.")
-    model = None
+    st.warning(f"AI services not available. Using fallback content. Error: {str(e)}")
 
 # Cultural content database
 CULTURAL_CONTENT = {
